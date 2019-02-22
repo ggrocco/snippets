@@ -84,4 +84,6 @@ command = ARGV[0]
 if command =~ /upgrade/i
   Helper.exit_msg('Namespace is required') if options[:namespace].nil?
   Helper.helm_upgrade(options[:namespace], options)
+else
+  Helper.exit_msg('COMMAND not found, please read helper.')
 end
