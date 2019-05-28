@@ -1,89 +1,122 @@
 #!/usr/bin/env ruby
 
-require 'optparse'
+require 'thor'
 require 'yaml'
+require 'pry-byebug'
 
-class Helper
-  class << self
-    def envs
-      @envs ||= Dir.glob("chart/#{chart_name}/values*.yaml").each_with_object({}) do |f, hash|
-        repository = YAML.load_file(f)['image']['repository']
-        _host, chart, environment = repository.split('/')
-        hash[environment] = { file: f, chart: chart }
-      end
+# Helper methods
+module Helper
+  # Run the Helm upgrade.
+  def helm_upgrade(namespace, recreate_pods, version)
+    puts 'Upgrading helm'
+    env, repo_version = repository(namespace)
+
+    extra = recreate_pods ? ' --recreate-pods' : ''
+    version = version || repo_version
+
+    puts `helm upgrade #{namespace} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{version}#{extra}`
+  end
+
+  # Open a connection with cluster an run the rake db:migrate
+  def rake_migrate(namespace)
+    puts 'Starting migration...'
+    open_database_connection do
+      database_url = build_database_url(namespace)
+      puts '-> Running the rake db:migrate'
+      puts `DATABASE_URL=#{database_url} rake db:migrate`
     end
+  end
 
-    def helm_upgrade(namespace, options)
-      puts 'Upgrading helm'
-      env, repo_version = repository(namespace)
-      extra = options[:recreate_pods] ? ' --recreate-pods' : ''
-      version = options[:version] || repo_version
+  def check!(namespace)
+    exit_msg("This cluster don't have the namespace #{namespace}") unless exist_namespace?(namespace)
+    exit_msg('This directory does not have a chart folder') if chart_name.nil?
+    exit_msg('This directory does not have environments defined') if envs.empty?
+  end
 
-      puts `helm upgrade #{namespace} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{version}#{extra}`
-    end
+  private
 
-    def check!
-      exit_msg('This directory does not have a chart folder') if chart_name.nil?
-      exit_msg('This directory does not have environments defined') if envs.empty?
-    end
+  def build_database_url(namespace)
+    secret_name = `kubectl get $(kubectl get pod -o=name -n #{namespace} | head -1) -n #{namespace} -o jsonpath='{.spec.containers[].env[].valueFrom.secretKeyRef.name}'`
+    exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster") if secret_name.nil?
 
-    def exit_msg(msg)
-      puts msg
-      exit(1)
-    end
+    url = `kubectl get secret #{secret_name} -o yaml -n #{namespace} -o jsonpath='{.data.database_url}' | base64 -D`
+    exit_msg("DATABASE_URL not register on '#{namespace}', check if this secret file exist on this cluster") if url.nil?
 
-    private
+    uri = URI.parse(url)
+    uri.host = '127.0.0.1'
+    uri.port = 3307
+    uri.to_s
+  end
 
-    def repository(namespace)
-      repository = `kubectl get $(kubectl get pod -o=name -n #{namespace} | head -1) -n #{namespace} -o jsonpath='{.spec.containers[].image}'`
-      exit_msg("Repository not found on '#{namespace}', check if this namespace exist on this cluster") if repository.nil?
-      _, chart, image_version = repository.split('/')
-      envrionment, version = image_version.split(':')
-      env = envs[envrionment]
-      exit_msg('FATAL!!! This chart is not for this repository!!!') if chart != env[:chart]
-      [env, version]
-    rescue
-      exit_msg("FAIL on get the repository on '#{namespace},  check you are at the correct cluster'")
-    end
+  def open_database_connection(&block)
+    puts '-> Open database connection'
+    tunnel = Process.spawn('kubectl -n default port-forward $(kubectl get pods -o=name | grep rds-fwd-socat) 3307:3306')
+    sleep 3 # wait the connection start
+    block.call
+  ensure
+    puts '-> Closing database connection'
+    Process.kill('HUP', tunnel)
+  end
 
-    def chart_name
-      @chart_name ||= begin
-                        Dir.chdir('chart') { Dir.glob('*').select {|f| File.directory? f} }.first
-                      rescue
-                        nil
-                      end
+  def exit_msg(msg)
+    puts msg
+    exit(1)
+  end
+
+  def repository(namespace)
+    repository = `kubectl get $(kubectl get pod -o=name -n #{namespace} | head -1) -n #{namespace} -o jsonpath='{.spec.containers[].image}'`
+    exit_msg("Repository not found on '#{namespace}', check if this namespace exist on this cluster") if repository.nil?
+
+    _, chart, image_version = repository.split('/')
+    envrionment, version = image_version.split(':')
+    env = envs[envrionment]
+    exit_msg('FATAL!!! This chart is not for this repository!!!') if chart != env[:chart]
+
+    [env, version]
+  rescue
+    exit_msg("FAIL on get the repository on '#{namespace},  check you are at the correct cluster'")
+  end
+
+  def exist_namespace?(namespace)
+    namespace_name = `kubectl get namespace -o name | grep '#{namespace}' | head -1`
+    /^namespace\/#{namespace}\n/m.match?(namespace_name)
+  end
+
+  def chart_name
+    @chart_name ||= begin
+                      Dir.chdir('chart') { Dir.glob('*').select {|f| File.directory? f} }.first
+                    rescue
+                      nil
+                    end
+  end
+
+  def envs
+    @envs ||= Dir.glob("chart/#{chart_name}/values*.yaml").each_with_object({}) do |f, hash|
+      repository = YAML.load_file(f)['image']['repository']
+      _host, chart, environment = repository.split('/')
+      hash[environment] = { file: f, chart: chart }
     end
   end
 end
 
-Helper.check!
+# Cli control.
+class KCli < Thor
+  include Helper
 
-ARGV << '-h' if ARGV.empty?
-options = { recreate_pods: false }
-OptionParser.new do |opts|
-  opts.banner = 'Usage: k_cli.rb COMMAND [options]'
-  opts.separator ''
-  opts.separator 'COMMAND'
-  opts.separator '  upgrade, helm upgrade'
+  class_option :namespace, type: :string, aliases: '-n', required: true, desc: 'Namespace on the clusters'
 
-  opts.on('-n', '--namespace NAMESPACES', 'REQUIRED Namespaces to helm upgrade') do |namespace|
-    options[:namespace] = namespace
+  option :version, type: :string, aliases: '-v', desc: 'Change the version, default keep the same'
+  option :recreate_pods, type: :boolean, aliases: '-r', desc: 'Recreate the pods. ATTENTION this can cause downtime'
+  desc 'upgrade', 'Upgrade the helm'
+  def upgrade
+    check!(options[:namespace])
+    helm_upgrade(options[:namespace], options[:recreate_pods], options[:version])
   end
 
-  opts.on('-r', '--recreate-pods', 'Recreate the pods. ATTENTION this can cause downtime!') do |v|
-    options[:recreate_pods] = true
+  desc 'migrate', 'Run the migration on the database'
+  def migrate
+    check!(options[:namespace])
+    rake_migrate(options[:namespace])
   end
-
-  opts.on('-v', '--version VERSION', 'Change the version, default keep the same') do |version|
-    options[:version] = version
-  end
-end.parse!
-
-Helper.exit_msg('Needs only one COMMAND') if ARGV.size > 1
-command = ARGV[0]
-if command =~ /upgrade/i
-  Helper.exit_msg('Namespace is required') if options[:namespace].nil?
-  Helper.helm_upgrade(options[:namespace], options)
-else
-  Helper.exit_msg('COMMAND not found, please read helper.')
 end
+KCli.start(ARGV)
