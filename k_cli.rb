@@ -2,7 +2,7 @@
 
 require 'thor'
 require 'yaml'
-require 'pry-byebug'
+# require 'pry-byebug's
 
 # Helper methods
 module Helper
@@ -78,7 +78,7 @@ module Helper
   end
 
   def exist_namespace?(namespace)
-    namespace_name = `kubectl get namespace -o name | grep '#{namespace}' | head -1`
+    namespace_name = `kubectl get namespace -o name | grep '/#{namespace}' | head -1`
     /^namespace\/#{namespace}\n/m.match?(namespace_name)
   end
 
