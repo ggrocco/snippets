@@ -2,6 +2,7 @@
 
 require 'thor'
 require 'yaml'
+require 'base64'
 # require 'pry-byebug'
 
 # Helper methods
@@ -50,7 +51,8 @@ module Helper
     secret_name = `kubectl get $(kubectl get pod -o=name -n #{namespace} | head -1) -n #{namespace} -o jsonpath='{.spec.containers[].env[].valueFrom.secretKeyRef.name}'`
     exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster") if secret_name.nil?
 
-    url = `kubectl get secret #{secret_name} -o yaml -n #{namespace} -o jsonpath='{.data.database_url}' | base64 -D`
+    encoded_url = `kubectl get secret #{secret_name} -o yaml -n #{namespace} -o jsonpath='{.data.database_url}'`
+    url = Base64.decode64(encoded_url)
     exit_msg("DATABASE_URL not register on '#{namespace}', check if this secret file exist on this cluster") if url.nil?
 
     uri = URI.parse(url)
