@@ -2,7 +2,7 @@
 
 require 'thor'
 require 'yaml'
-# require 'pry-byebug's
+# require 'pry-byebug'
 
 # Helper methods
 module Helper
@@ -21,9 +21,20 @@ module Helper
   def rake_migrate(namespace)
     puts 'Starting migration...'
     open_database_connection do
-      database_url = build_database_url(namespace)
+      database_uri = build_database_uri(namespace)
       puts '-> Running the rake db:migrate'
-      puts `DATABASE_URL=#{database_url} rake db:migrate`
+      puts `DATABASE_URL=#{database_uri.to_s} rake db:migrate`
+    end
+  end
+
+  # Open a connection with cluster an run the mysqldump
+  def mysqldump(namespace)
+    puts 'Starting migration...'
+    open_database_connection do
+      database_uri = build_database_uri(namespace)
+      database_name = database_uri.path.split('/')[1]
+      puts '-> Running the mysqldump'
+      puts `mysqldump -h #{database_uri.host} -P #{database_uri.port} -u #{database_uri.user} --password=#{database_uri.password} #{database_name} | gzip > #{database_name}-#{Time.now.strftime('%Y%m%d-%H%M%S')}.sql.gz`
     end
   end
 
@@ -35,7 +46,7 @@ module Helper
 
   private
 
-  def build_database_url(namespace)
+  def build_database_uri(namespace)
     secret_name = `kubectl get $(kubectl get pod -o=name -n #{namespace} | head -1) -n #{namespace} -o jsonpath='{.spec.containers[].env[].valueFrom.secretKeyRef.name}'`
     exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster") if secret_name.nil?
 
@@ -45,7 +56,7 @@ module Helper
     uri = URI.parse(url)
     uri.host = '127.0.0.1'
     uri.port = 3307
-    uri.to_s
+    uri
   end
 
   def open_database_connection(&block)
@@ -117,6 +128,12 @@ class KCli < Thor
   def migrate
     check!(options[:namespace])
     rake_migrate(options[:namespace])
+  end
+
+  desc 'dump', 'Run the mysqldump on the database'
+  def dump
+    check!(options[:namespace])
+    mysqldump(options[:namespace])
   end
 end
 KCli.start(ARGV)
