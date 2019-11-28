@@ -35,8 +35,10 @@ module Helper
     open_database_connection do
       database_uri = build_database_uri(namespace)
       database_name ||= database_uri.path.split('/')[1]
+      output_file = "#{database_name}-#{Time.now.strftime('%Y%m%d-%H%M%S')}.sql"
+      compress_cmd = compress_command(output_file)
       puts '-> Running the mysqldump'
-      puts `mysqldump -h #{database_uri.host} -P #{database_uri.port} -u #{database_uri.user} --password=#{database_uri.password} #{database_name} | gzip > #{database_name}-#{Time.now.strftime('%Y%m%d-%H%M%S')}.sql.gz`
+      puts `mysqldump -h #{database_uri.host} -P #{database_uri.port} -u #{database_uri.user} --password=#{database_uri.password} #{database_name} | #{compress_cmd}`
     end
   end
 
@@ -125,6 +127,20 @@ module Helper
   def search_by_name(match: nil, objects: 'pods', namespace: 'default')
     pods = `kubectl get #{objects} -o=name -n #{namespace}`.split("\n")
     pods.select { |n| n.match(/#{match}/) }.first
+  end
+
+  def compress_command(output_file)
+    if program?('7z') || program?('7z.exe')
+      "7z a -si #{output_file}.7z"
+    else
+      "gzip > #{output_file}.gz"
+    end
+  end
+
+  def program?(program)
+    ENV['PATH'].split(File::PATH_SEPARATOR).any? do |directory|
+      File.executable?(File.join(directory, program.to_s))
+    end
   end
 end
 
