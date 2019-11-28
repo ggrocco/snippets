@@ -51,12 +51,12 @@ module Helper
   private
 
   def build_database_uri(namespace)
-    secret_name = `kubectl get #{search_by_name(namespace: namespace)} -n #{namespace} -o jsonpath='{.spec.containers[].env[].valueFrom.secretKeyRef.name}'`
+    secret_name = `kubectl get #{search_by_name(namespace: namespace)} -n #{namespace} -o jsonpath={.spec.containers[].env[].valueFrom.secretKeyRef.name}`
     if secret_name.nil?
       exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster")
     end
 
-    encoded_url = `kubectl get secret #{secret_name} -o yaml -n #{namespace} -o jsonpath='{.data.database_url}'`
+    encoded_url = `kubectl get secret #{secret_name} -o yaml -n #{namespace} -o jsonpath={.data.database_url}`
     url = Base64.decode64(encoded_url)
     if url.nil?
       exit_msg("DATABASE_URL not register on '#{namespace}', check if this secret file exist on this cluster")
@@ -85,7 +85,7 @@ module Helper
   end
 
   def repository(namespace)
-    repository = `kubectl get #{search_by_name(namespace: namespace)} -n #{namespace} -o jsonpath='{.spec.containers[].image}'`
+    repository = `kubectl get #{search_by_name(namespace: namespace)} -n #{namespace} -o jsonpath={.spec.containers[].image}`
     if repository.nil?
       exit_msg("Repository not found on '#{namespace}', check if this namespace exist on this cluster")
     end
