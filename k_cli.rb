@@ -78,7 +78,7 @@ module Helper
     block.call
   ensure
     puts '-> Closing database connection'
-    Process.kill('HUP', tunnel)
+    Process.kill(9, tunnel)
   end
 
   def exit_msg(msg)
