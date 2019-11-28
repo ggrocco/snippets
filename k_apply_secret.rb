@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 
 # This script will encrypt and apply the secret file,
 # will need to have the namespace on.
@@ -10,7 +11,7 @@ require 'yaml'
 require 'tempfile'
 
 INPUT = ARGV[0]
-VALID_EXT = '.yaml'.freeze
+VALID_EXT = '.yaml'
 
 unless INPUT && File.exist?(INPUT) && File.extname(INPUT) == VALID_EXT
   puts 'Need to have a base secrets file for be encoded'

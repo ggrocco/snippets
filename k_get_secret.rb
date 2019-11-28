@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 
 # This script will decrypt a secret file data and build
 # other based on the internal template.
@@ -17,7 +18,7 @@ unless SECRET_NAME && NAMESPACE
   exit 1
 end
 
-YAML_TEMPLATE = <<-YAML.freeze
+YAML_TEMPLATE = <<-YAML
   apiVersion: v1
   kind: Secret
   metadata:

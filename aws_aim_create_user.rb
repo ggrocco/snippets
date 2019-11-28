@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 
 require 'securerandom'
 require 'json'
@@ -14,16 +15,16 @@ unless email && groups
   exit 1
 end
 
+def exec(command, _field = nil)
+  output = `#{command}`
+  return JSON.parse(output) if $CHILD_STATUS.success? && !output.strip.empty?
 
-def exec(command, field = nil)
-  output=`#{command}`
-  return JSON.parse(output) if $?.success? && !output.strip.empty?
   {}
 end
 
 @output = {}
 user = exec("aws iam create-user --user-name #{email}")
-@output[:email] = user.dig('User', "UserName")
+@output[:email] = user.dig('User', 'UserName')
 
 exec("aws iam create-login-profile --user-name #{email} --password-reset-required --password #{temp_password}")
 @output[:temp_password] = temp_password
@@ -34,8 +35,8 @@ end
 
 if add_access_keys
   access_key = exec("aws iam create-access-key --user-name #{email}")
-  @output[:access_key_id] = access_key.dig('AccessKey', "AccessKeyId")
-  @output[:secret_access_key] = access_key.dig('AccessKey', "SecretAccessKey")
+  @output[:access_key_id] = access_key.dig('AccessKey', 'AccessKeyId')
+  @output[:secret_access_key] = access_key.dig('AccessKey', 'SecretAccessKey')
 end
 
 File.write("#{email}.json", @output.to_json)
