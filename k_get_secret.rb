@@ -31,7 +31,7 @@ YAML
 output_file = YAML.safe_load(YAML_TEMPLATE)
 output_file['data'] = {}
 
-file = `kubectl get secret #{SECRET_NAME} -n #{NAMESPACE} -o jsonpath='{.data}'`
+file = `kubectl get secret #{SECRET_NAME} -n #{NAMESPACE} -o jsonpath={.data}`
 if file.empty?
   puts 'Fail on retrieve the secret'
   exit 1
