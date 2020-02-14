@@ -25,7 +25,7 @@ module Helper
     open_database_connection do
       database_uri = build_database_uri(namespace)
       puts '-> Running the rake db:migrate'
-      puts `DATABASE_URL=#{database_uri} rake db:migrate`
+      puts `rake db:migrate DATABASE_URL=#{database_uri}`
     end
   end
 
