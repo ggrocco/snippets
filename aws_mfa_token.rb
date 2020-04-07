@@ -4,6 +4,11 @@
 require 'json'
 require 'iniparse'
 
+unless defined?(IniParse)
+  puts "Please install gem `iniparse`"
+  exit(1)
+end
+
 SESSION_DURATION = 129_600 # 36 hours
 AWS_CRERENTIALS_FILE = "#{Dir.home}/.aws/credentials"
 AWS_MFA_PROFILE = 'with-mfa'
@@ -16,8 +21,9 @@ unless File.exist?(AWS_CRERENTIALS_FILE)
   exit
 end
 
-if aws_token == ''
+if aws_token.nil? || aws_token.empty?
   puts 'Usage: `./aws-mfa-token <MFA-TOKEN> [<PROFILE>]'
+  puts '  - MFA-TOKEN needs to be enable at the AWS Account'
   exit
 end
 
