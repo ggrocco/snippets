@@ -3,13 +3,14 @@
 
 # Helper for interact with Kubeclt and Helm.
 # Author: https://github.com/ggrocco
-# Last Change: 2020-07-02
+# Last Change: 2020-07-18
 
 require 'base64'
 require 'mkmf'
 require 'open3'
 require 'thor'
 require 'yaml'
+require 'tempfile'
 # require 'pry-byebug'
 
 # Base helper
@@ -56,6 +57,18 @@ class BaseHelper
     secret_name
   end
 
+  def repository(namespace)
+    por_name = search_by_name(namespace: namespace)
+    repository = kubectl("get #{por_name} -n #{namespace} -o jsonpath={.spec.containers[].image}")
+    if repository.nil?
+      exit_msg("Repository not found on '#{namespace}', check if this namespace exist on this cluster")
+    end
+
+    repository
+  rescue StandardError
+    exit_msg("FAIL on get the repository on '#{namespace}',  check you are at the correct cluster")
+  end
+
   def exit_msg(msg)
     puts msg
     exit(1)
@@ -77,6 +90,11 @@ class BaseHelper
     run('kubectl', arguments, print)
   end
 
+  def aws(arguments, print: false)
+    exit_msg('Needs to have AWS Cli installed') unless find_executable0('aws')
+    run('aws', arguments, print)
+  end
+
   def run(prog, arguments, print)
     stdout, stderr, status = Open3.capture3("#{prog} #{arguments}")
     exit_msg("Fail on execute the #{prog}: #{stderr}") unless status.success?
@@ -90,38 +108,114 @@ class BaseHelper
   end
 end
 
+# Rollout
+class Rollout < BaseHelper
+  def initialize(namespace)
+    @namespace = namespace
+  end
+
+  def restart
+    kubectl("rollout restart deploy -n #{@namespace}", print: true)
+  end
+end
+
+class RollbackHelm < BaseHelper
+  REGEX_PARSE_SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:\-[a-z]+)?(?:\.(\d+))?/i
+
+  attr_reader :namespace
+
+  def initialize(namespace)
+    @namespace = namespace
+  end
+
+  def rollback(version_to_rollback = nil)
+    puts 'Rollback helm'
+
+    repository = repository_name
+
+    old_version, new_version = from_to_versions(repository, version_to_rollback)
+
+    puts "Moving the verions #{old_version} to new #{new_version}"
+    rename_tags(repository, old_version, new_version)
+  end
+
+  private
+
+  def from_to_versions(repository, version_to_rollback = nil)
+    versions = versions(repository)
+
+    old_version, current_version = select_last_two_versions(versions)
+    base_version = version_to_rollback || old_version
+
+    exit_msg('FATAL!!! Do not exist a version to do the rollback!!!') unless versions.include?(base_version)
+
+    new_version = build_release_candidate(current_version)
+
+    [base_version, new_version]
+  end
+
+  def versions(repository)
+    images = aws("ecr list-images --repository-name #{repository} --output text --max-items 100")
+    images.split("\n").map { |l| l.split("\t").last }.sort
+  end
+
+  def select_last_two_versions(versions)
+    if versions.last == 'latest'
+      versions.slice(-3, 2)
+    else
+      versions.slice(-2, 2)
+    end
+  end
+
+  def repository_name
+    repository = repository(@namespace)
+    project, env_version = repository.split('/').slice(-2, 2)
+    "#{project}/#{env_version.split(':').first}"
+  end
+
+  def build_release_candidate(current_version)
+    major, minor, patch, pre_release  = REGEX_PARSE_SEMVER.match(current_version).captures.map(&:to_i)
+
+    patch += 1 if pre_release.zero?
+    pre_release += 1
+
+    "#{major}.#{minor}.#{patch}-rc.#{pre_release}"
+  end
+
+  def rename_tags(repository, current_version, new_version)
+    file = Tempfile.new('manifest')
+
+    get_manifest_command = <<~CMD
+      ecr batch-get-image --repository-name #{repository} \
+                          --image-ids imageTag=#{current_version} \
+                          --query 'images[].imageManifest' \
+                          --output text > #{file.path}
+    CMD
+    aws(get_manifest_command)
+    aws("ecr put-image --repository-name #{repository} --image-tag #{new_version} --image-manifest file://#{file.path}")
+
+    file.unlink
+  end
+end
+
+#
 # Upgrade the helm helper
 class UpgradeHelm < BaseHelper
-  attr_reader :namespace, :recreate_pods, :version
+  attr_reader :namespace, :version
 
-  def initialize(namespace, recreate_pods, version = nil)
+  def initialize(namespace, version = nil)
     @namespace = namespace
-    @recreate_pods = recreate_pods
     @version = version
   end
 
   # Run the Helm upgrade.
   def upgrade
     puts 'Upgrading helm'
-    env, repo_version = repository
+    repository = repository(@namespace)
+    env, repo_version = extract_env_version(repository)
     @version ||= repo_version
 
     helm("upgrade #{@namespace} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{@version}", print: true)
-    kubectl("rollout restart deploy -n #{@namespace}", print: true) if @recreate_pods
-  end
-
-  private
-
-  def repository
-    por_name = search_by_name(namespace: @namespace)
-    repository = kubectl("get #{por_name} -n #{@namespace} -o jsonpath={.spec.containers[].image}")
-    if repository.nil?
-      exit_msg("Repository not found on '#{@namespace}', check if this namespace exist on this cluster")
-    end
-
-    extract_env_version(repository)
-  rescue StandardError
-    exit_msg("FAIL on get the repository on '#{@namespace}',  check you are at the correct cluster")
   end
 
   def extract_env_version(repository)
@@ -283,10 +377,27 @@ class KCli < Thor
   method_option :version, type: :string, aliases: '-v', desc: 'Change the version, default keep the same'
   method_option :recreate_pods, type: :boolean, aliases: '-r', desc: 'Recreate the pods.'
   def upgrade
-    namespace = options[:namespace]
-    ValidBase.new(namespace).check!
-    ValidSecret.new(namespace).check!
-    UpgradeHelm.new(namespace, options[:recreate_pods], options[:version]).upgrade
+    valid_environment
+    valid_secret
+    UpgradeHelm.new(options[:namespace], options[:version]).upgrade
+    restart_pods if options[:recreate_pods]
+  end
+
+  desc 'restart', 'Rollout restart pods'
+  def restart_pods
+    Rollout.new(options[:namespace]).restart
+  end
+
+  desc 'rollback', 'Rollback the helm'
+  method_option :version, type: :string, aliases: '-v', desc: 'Rollback to this version'
+  def rollback
+    valid_environment
+    new_version = RollbackHelm.new(options[:namespace]).rollback(options[:version])
+  end
+
+  desc 'valid_environment', 'Valid if the chart and folder is correct setup'
+  def valid_environment
+    ValidBase.new(options[:namespace]).check!
   end
 
   desc 'valid_secret', 'Valid if the secrets are registered correctly'
@@ -296,14 +407,14 @@ class KCli < Thor
 
   desc 'migrate', 'Run the migration on the database'
   def migrate
-    ValidBase.new(options[:namespace]).check!
+    valid_environment
     RakeMigrate.new(options[:namespace]).migrate
   end
 
   desc 'dump', 'Run the mysqldump on the database'
   method_option :database, type: :string, aliases: '-d', desc: 'For change from default detabase'
   def dump
-    ValidBase.new(options[:namespace]).check!
+    valid_environment
     DatabaseDump.new(options[:namespace], options[:database]).dump
   end
 end
