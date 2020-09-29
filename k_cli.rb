@@ -17,6 +17,8 @@ require 'tempfile'
 class BaseHelper
   def search_by_name(match: nil, objects: 'pods', namespace: 'default')
     pods = kubectl("get #{objects} -o=name -n #{namespace}").split("\n")
+
+    pods = pods.select { |n| n.match(%r{^pod\/#{namespace}}) } if namespace != 'default'
     pods.select { |n| n.match(/#{match}/) }.first
   end
 
@@ -174,7 +176,7 @@ class RollbackHelm < BaseHelper
   end
 
   def build_release_candidate(current_version)
-    major, minor, patch, pre_release  = REGEX_PARSE_SEMVER.match(current_version).captures.map(&:to_i)
+    major, minor, patch, pre_release = REGEX_PARSE_SEMVER.match(current_version).captures.map(&:to_i)
 
     patch += 1 if pre_release.zero?
     pre_release += 1
