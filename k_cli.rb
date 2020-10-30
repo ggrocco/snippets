@@ -52,8 +52,8 @@ class BaseHelper
 
   def secret_name(namespace: 'default')
     por_name = search_by_name(namespace: namespace)
-    json_path = 'jsonpath={.spec.containers[].env[1].valueFrom.secretKeyRef.name}'
-    secret_name = kubectl("get #{por_name} -n #{namespace} -o #{json_path}")
+    json_path = 'jsonpath={.spec.containers[].env[*].valueFrom.secretKeyRef.name}'
+    secret_name = kubectl("get #{por_name} -n #{namespace} -o #{json_path}").split(' ').uniq.first
     exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster") if secret_name.empty?
 
     secret_name
