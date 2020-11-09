@@ -30,6 +30,10 @@ class BaseHelper
                     end
   end
 
+  def chart_version
+    @chart_version ||= YAML.load_file("chart/#{chart_name}/Chart.yaml")['apiVersion']
+  end
+
   def envs
     @envs ||= Dir.glob("chart/#{chart_name}/values*.yaml").each_with_object({}) do |f, hash|
       repository = YAML.load_file(f)['image']['repository']
@@ -77,14 +81,11 @@ class BaseHelper
   end
 
   def helm(arguments, print: false)
-    prog = if find_executable0('helm2')
-             'helm2'
-           elsif find_executable0('helm')
-             'helm'
-           end
+    executable = chart_version == 'v1' ? 'helm2' : 'helm'
+    cmd        = find_executable0(executable)
 
-    exit_msg('Needs to have helm version 2 installed') if prog.nil?
-    run(prog, arguments, print)
+    exit_msg("Needs to have #{executable} installed") if cmd.nil?
+    run(cmd, arguments, print)
   end
 
   def kubectl(arguments, print: false)
