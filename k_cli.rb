@@ -217,8 +217,9 @@ class UpgradeHelm < BaseHelper
     repository = repository(@namespace)
     env, repo_version = extract_env_version(repository)
     @version ||= repo_version
+    namespace = " -n #{@namespace}" if chart_version == 'v2' # because don't have tiller.
 
-    helm("upgrade #{@namespace} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{@version}", print: true)
+    helm("upgrade #{@namespace}#{namespace} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{@version}", print: true)
   end
 
   def extract_env_version(repository)
