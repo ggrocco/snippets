@@ -85,7 +85,7 @@ class BaseHelper
     cmd        = find_executable0(executable)
 
     exit_msg("Needs to have #{executable} installed") if cmd.nil?
-    run(cmd, arguments, print)
+    run(executable, arguments, print)
   end
 
   def kubectl(arguments, print: false)
