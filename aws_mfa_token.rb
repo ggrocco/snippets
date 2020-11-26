@@ -5,7 +5,7 @@ require 'json'
 require 'iniparse'
 
 unless defined?(IniParse)
-  puts "Please install gem `iniparse`"
+  puts 'Please install gem `iniparse`'
   exit(1)
 end
 

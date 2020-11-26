@@ -1,0 +1,16 @@
+# checks for missing top-level documentation of classes and modules.
+AllCops:
+  TargetRubyVersion: 2.7.2
+  NewCops: enable
+
+Style/Documentation:
+  Enabled: false
+
+Layout/LineLength:
+ Max: 120
+
+Metrics/ClassLength:
+  Enabled: false
+
+Metrics/MethodLength:
+  Max: 25

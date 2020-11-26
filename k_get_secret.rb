@@ -8,6 +8,8 @@
 
 require 'base64'
 require 'yaml'
+require 'json'
+# require 'pry-byebug'
 
 SECRET_NAME = ARGV[0]
 NAMESPACE = ARGV[1] || 'default'
@@ -15,6 +17,12 @@ NAMESPACE = ARGV[1] || 'default'
 unless SECRET_NAME && NAMESPACE
   puts 'To download needs to have the secret name and namespace'
   puts "Ex: $ #{__FILE__} SECRET_NAME NAMESPACE"
+  exit 1
+end
+
+file = `kubectl get secret #{SECRET_NAME} -n #{NAMESPACE} -o jsonpath={.data}`
+if file.empty?
+  puts 'Fail on retrieve the secret'
   exit 1
 end
 
@@ -31,13 +39,7 @@ YAML
 output_file = YAML.safe_load(YAML_TEMPLATE)
 output_file['data'] = {}
 
-file = `kubectl get secret #{SECRET_NAME} -n #{NAMESPACE} -o jsonpath={.data}`
-if file.empty?
-  puts 'Fail on retrieve the secret'
-  exit 1
-end
-file[4...-1].split(' ').map do |line|
-  key, value = line.split(':')
+JSON.parse(file).each do |key, value|
   output_file['data'][key] = value ? Base64.decode64(value) : nil
 end
 
