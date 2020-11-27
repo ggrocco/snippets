@@ -3,31 +3,39 @@
 
 # Helper for interact with Kubeclt and Helm.
 # Author: https://github.com/ggrocco
-# Last Change: 2020-07-18
+# Last Change: 2020-11-27
+# TO DEBUG call whit DEBUG=true before the call
 
 require 'base64'
+require 'json'
 require 'mkmf'
 require 'open3'
+require 'tempfile'
 require 'thor'
 require 'yaml'
-require 'tempfile'
 # require 'pry-byebug'
 
 # Base helper
 class BaseHelper
+  attr_reader :namespace
+
+  def initialize(namespace)
+    @namespace = namespace
+  end
+
   def search_by_name(match: nil, objects: 'pods', namespace: 'default')
     pods = kubectl("get #{objects} -o=name -n #{namespace}").split("\n")
 
-    pods = pods.select { |n| n.match(%r{^pod\/#{namespace}}) } if namespace != 'default'
+    pods = pods.select { |n| n.match(%r{^pod/#{namespace}}) } if namespace != 'default'
     pods.select { |n| n.match(/#{match}/) }.first
   end
 
   def chart_name
     @chart_name ||= begin
-                      Dir.chdir('chart') { Dir.glob('*').select { |f| File.directory? f } }.first
-                    rescue StandardError
-                      nil
-                    end
+      Dir.chdir('chart') { Dir.glob('*').select { |f| File.directory? f } }.first
+    rescue StandardError
+      nil
+    end
   end
 
   def chart_version
@@ -54,21 +62,19 @@ class BaseHelper
     end
   end
 
-  def secret_name(namespace: 'default')
+  def secret_name
     por_name = search_by_name(namespace: namespace)
     json_path = 'jsonpath={.spec.containers[].env[*].valueFrom.secretKeyRef.name}'
-    secret_name = kubectl("get #{por_name} -n #{namespace} -o #{json_path}").split(' ').uniq.first
-    exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster") if secret_name.empty?
+    name = kubectl("get #{por_name} -n #{namespace} -o #{json_path}").split.uniq.first
+    exit_msg("Secret not found on '#{namespace}', check if this namespace exist on this cluster") if name.empty?
 
-    secret_name
+    name
   end
 
-  def repository(namespace)
+  def repository
     por_name = search_by_name(namespace: namespace)
     repository = kubectl("get #{por_name} -n #{namespace} -o jsonpath={.spec.containers[].image}")
-    if repository.nil?
-      exit_msg("Repository not found on '#{namespace}', check if this namespace exist on this cluster")
-    end
+    exit_msg("Repository not found on '#{namespace}', check if this namespace exist on this cluster") if repository.nil?
 
     repository
   rescue StandardError
@@ -99,7 +105,10 @@ class BaseHelper
   end
 
   def run(prog, arguments, print)
-    stdout, stderr, status = Open3.capture3("#{prog} #{arguments}")
+    command = "#{prog} #{arguments}"
+    puts command if ENV['DEBUG'] == 'true'
+
+    stdout, stderr, status = Open3.capture3(command)
     exit_msg("Fail on execute the #{prog}: #{stderr}") unless status.success?
 
     stdout = stdout.slice(0..-(1 + "\n".size)) if stdout.end_with?("\n")
@@ -113,23 +122,13 @@ end
 
 # Rollout
 class Rollout < BaseHelper
-  def initialize(namespace)
-    @namespace = namespace
-  end
-
   def restart
-    kubectl("rollout restart deploy -n #{@namespace}", print: true)
+    kubectl("rollout restart deploy -n #{namespace}", print: true)
   end
 end
 
 class RollbackHelm < BaseHelper
-  REGEX_PARSE_SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:\-[a-z]+)?(?:\.(\d+))?/i
-
-  attr_reader :namespace
-
-  def initialize(namespace)
-    @namespace = namespace
-  end
+  REGEX_PARSE_SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-[a-z]+)?(?:\.(\d+))?/i.freeze
 
   def rollback(version_to_rollback = nil)
     puts 'Rollback helm'
@@ -171,7 +170,6 @@ class RollbackHelm < BaseHelper
   end
 
   def repository_name
-    repository = repository(@namespace)
     project, env_version = repository.split('/').slice(-2, 2)
     "#{project}/#{env_version.split(':').first}"
   end
@@ -204,22 +202,23 @@ end
 #
 # Upgrade the helm helper
 class UpgradeHelm < BaseHelper
-  attr_reader :namespace, :version
+  attr_reader :version
 
   def initialize(namespace, version = nil)
-    @namespace = namespace
+    super(namespace)
+
     @version = version
   end
 
   # Run the Helm upgrade.
   def upgrade
     puts 'Upgrading helm'
-    repository = repository(@namespace)
     env, repo_version = extract_env_version(repository)
     @version ||= repo_version
-    namespace = " -n #{@namespace}" if chart_version == 'v2' # because don't have tiller.
+    explicit_ns = " -n #{namespace}" if chart_version == 'v2' # because don't have tiller.
 
-    helm("upgrade #{@namespace}#{namespace} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{@version}", print: true)
+    helm("upgrade #{namespace}#{explicit_ns} ./chart/#{chart_name} -f ./#{env[:file]} --set=image.tag=#{@version}",
+         print: true)
   end
 
   def extract_env_version(repository)
@@ -233,21 +232,38 @@ class UpgradeHelm < BaseHelper
   end
 end
 
-# Base database helpers
-class BaseDatabaseHelper < BaseHelper
-  attr_reader :namespace
+# Patch secret helper
+class PatchSecretHelper < BaseHelper
+  attr_reader :key, :value
 
-  def initialize(namespace)
-    @namespace = namespace
+  def initialize(namespace, key, value)
+    super(namespace)
+    @key = key
+    @value = value
   end
 
+  def patch
+    kubectl("patch secret #{secret_name} -n #{namespace} --patch '#{data_value}'", print: true)
+  end
+
+  private
+
+  def data_value
+    { 'data' => { key => encoded_value } }.to_json
+  end
+
+  def encoded_value
+    Base64.encode64(value).delete("\n").strip
+  end
+end
+
+# Base database helpers
+class BaseDatabaseHelper < BaseHelper
   def build_database_uri
-    secret = secret_name(namespace: @namespace)
-    encoded_url = kubectl("get secret #{secret} -o yaml -n #{@namespace} -o jsonpath={.data.database_url}")
+    encoded_url = kubectl("get secret #{secret_name} -o yaml -n #{namespace} -o jsonpath={.data.database_url}")
     url = Base64.decode64(encoded_url)
-    if url.nil?
-      exit_msg("DATABASE_URL not register on '#{@namespace}', check if this secret file exist on this cluster")
-    end
+
+    exit_msg("DATABASE_URL not register on '#{namespace}', check if this secret file exist on this cluster") if url.nil?
 
     uri = URI.parse(url)
     uri.host = '127.0.0.1'
@@ -327,10 +343,6 @@ end
 
 # Valid if the secrets are registered correctly.
 class ValidSecret < BaseHelper
-  def initialize(namespace)
-    @namespace = namespace
-  end
-
   def check!
     missing_secrets = chart_secrets - deployed_secrets
     if missing_secrets.empty?
@@ -343,8 +355,7 @@ class ValidSecret < BaseHelper
   private
 
   def deployed_secrets
-    secret = secret_name(namespace: @namespace)
-    file = kubectl("get secret #{secret} -n #{@namespace} -o yaml")
+    file = kubectl("get secret #{secret_name} -n #{namespace} -o yaml")
 
     YAML.safe_load(file)['data'].keys.compact
   end
@@ -356,12 +367,8 @@ end
 
 # Helper methods
 class ValidBase < BaseHelper
-  def initialize(namespace)
-    @namespace = namespace
-  end
-
   def check!
-    exit_msg("This cluster don't have the namespace #{@namespace}") unless exist_namespace?
+    exit_msg("This cluster don't have the namespace #{namespace}") unless exist_namespace?
     exit_msg('This directory does not have a chart folder') if chart_name.nil?
     exit_msg('This directory does not have environments defined') if envs.empty?
   end
@@ -369,17 +376,21 @@ class ValidBase < BaseHelper
   private
 
   def exist_namespace?
-    !search_by_name(objects: 'namespace', match: "^namespace/#{@namespace}").nil?
+    !search_by_name(objects: 'namespace', match: "^namespace/#{namespace}").nil?
   end
 end
 
 # Cli control.
 class KCli < Thor
+  def self.exit_on_failure?
+    true
+  end
+
   class_option :namespace, type: :string, aliases: '-n', required: true, desc: 'Namespace on the clusters'
 
   desc 'upgrade', 'Upgrade the helm'
   method_option :version, type: :string, aliases: '-v', desc: 'Change the version, default keep the same'
-  method_option :recreate_pods, type: :boolean, aliases: '-r', desc: 'Recreate the pods.'
+  method_option :recreate_pods, type: :boolean, aliases: '-r', desc: 'Recreate the pods'
   def upgrade
     valid_environment
     valid_secret
@@ -396,7 +407,7 @@ class KCli < Thor
   method_option :version, type: :string, aliases: '-v', desc: 'Rollback to this version'
   def rollback
     valid_environment
-    new_version = RollbackHelm.new(options[:namespace]).rollback(options[:version])
+    RollbackHelm.new(options[:namespace]).rollback(options[:version])
   end
 
   desc 'valid_environment', 'Valid if the chart and folder is correct setup'
@@ -413,6 +424,14 @@ class KCli < Thor
   def migrate
     valid_environment
     RakeMigrate.new(options[:namespace]).migrate
+  end
+
+  desc 'patch_secret', 'Update a secret key'
+  method_option :key, type: :string, aliases: '-k', required: true, desc: 'Key to be upgrade'
+  method_option :value, type: :string, aliases: '-v', required: true, desc: 'Value to be defined'
+  def patch_secret
+    valid_environment
+    PatchSecretHelper.new(options[:namespace], options[:key], options[:value]).patch
   end
 
   desc 'dump', 'Run the mysqldump on the database'
