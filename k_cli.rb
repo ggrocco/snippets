@@ -249,7 +249,7 @@ class PatchSecretHelper < BaseHelper
   private
 
   def data_value
-    { 'data' => { key.downcase => encoded_value } }.to_json
+    { 'data' => { key.downcase => encoded_value } }.to_yaml
   end
 
   def encoded_value
