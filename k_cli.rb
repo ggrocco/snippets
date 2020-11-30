@@ -7,6 +7,7 @@
 # TO DEBUG call whit DEBUG=true before the call
 
 require 'base64'
+require 'json'
 require 'mkmf'
 require 'open3'
 require 'tempfile'
@@ -242,13 +243,19 @@ class PatchSecretHelper < BaseHelper
   end
 
   def patch
-    kubectl("patch secret #{secret_name} -n #{namespace} --patch '#{data_value}'", print: true)
+    if RUBY_PLATFORM =~ /mswin/
+      puts 'NOTE: because of some incompatibility needs to be performed manually:'
+      puts "kubectl patch secret #{secret_name} -n #{namespace} --patch '#{data_value}'"
+
+    else
+      kubectl("patch secret #{secret_name} -n #{namespace} --patch '#{data_value}'", print: true)
+    end
   end
 
   private
 
   def data_value
-    { 'data' => { key.downcase => encoded_value } }.to_yaml
+    { 'data' => { key.downcase => encoded_value } }.to_json
   end
 
   def encoded_value
