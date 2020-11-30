@@ -7,7 +7,6 @@
 # TO DEBUG call whit DEBUG=true before the call
 
 require 'base64'
-require 'json'
 require 'mkmf'
 require 'open3'
 require 'tempfile'
