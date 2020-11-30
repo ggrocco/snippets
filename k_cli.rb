@@ -243,10 +243,9 @@ class PatchSecretHelper < BaseHelper
   end
 
   def patch
-    if RUBY_PLATFORM =~ /mswin/
+    if RUBY_PLATFORM =~ /mswin|mingw32/
       puts 'NOTE: because of some incompatibility needs to be performed manually:'
       puts "kubectl patch secret #{secret_name} -n #{namespace} --patch '#{data_value}'"
-
     else
       kubectl("patch secret #{secret_name} -n #{namespace} --patch '#{data_value}'", print: true)
     end
