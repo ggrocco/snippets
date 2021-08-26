@@ -5,6 +5,13 @@
 # CONTEXT=prod KEY=base_64_encoded_key CRT=base_64_encoded_crt ./patch_wildcard.sh
 # or
 # ./patch_wildcard.sh prod base_64_encoded_key base_64_encoded_crt
+#
+#
+# For argocd-secret:
+#
+# CONTEXT=prod KEY=base_64_encoded_key CRT=base_64_encoded_crt SECRET_MATCH=argocd-secret ./patch_wildcard.sh
+# or
+# ./patch_wildcard.sh prod base_64_encoded_key base_64_encoded_crt argocd-secret
 
 if [[ -z $CONTEXT || -z $KEY || -z $CRT ]]
 then
@@ -17,6 +24,14 @@ else
   CRT=$CRT
 fi
 
+if [[ -z $4 && -z $SECRET_MATCH ]]
+then
+  SECRET_MATCH="wildcard-pwnhealth"
+elif [[ -z $SECRET_MATCH ]]
+then
+  SECRET_MATCH=$4
+fi
+
 if [[ -z $CONTEXT || -z $KEY || -z $CRT ]]
 then
   echo "Please pass context, base 64 encoded key and base 64 encoded crt"
@@ -24,8 +39,9 @@ then
   printf "Xor:\n ./patch_wildcard.sh prod base_64_encoded_key base_64_encoded_crt\n"
 else
   echo "Starting..."
+  printf "Patching secret: $SECRET_MATCH \n"
   kubectl get secrets --context=$CONTEXT --all-namespaces | # get all secrets
-    grep "wildcard-pwnhealth" | # filter by secrets that match wildcard-pwnhealth
+    grep $SECRET_MATCH | # filter by secrets that match wildcard-pwnhealth
     awk '{ print $1 }' | # print the first column (the namespace)
     xargs -n1 echo
 
@@ -33,7 +49,7 @@ else
   case "$response" in
       [yY][eE][sS]|[yY]) 
         kubectl get secrets --context=$CONTEXT --all-namespaces | # get all secrets
-          grep "wildcard-pwnhealth" | # filter by secrets that match wildcard-pwnhealth
+          grep $SECRET_MATCH | # filter by secrets that match wildcard-pwnhealth
           awk '{ print $1 }' | # print the first column (the namespace)
           # Iterate through every namespace and update the tls.key and tls.crt value
           # for secret named: "wildcard-pwnhealth-com-tls"
